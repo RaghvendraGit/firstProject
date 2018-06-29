@@ -1,0 +1,750 @@
+AWS Console: nova.dowjones.net 
+
+Prerequisites for a Track Apps server:
+https://drive.google.com/file/d/0B_m8_F4oDKz-Q0dqYnZ5WFJoU1U/view?usp=sharing
+This is the basics for the instance. 
+NOTES on prerequisites:
+- The FCM and ODS mount points are not needed anymore.
+
+- The latest address.dat can be found here:
+https://artifactory.dowjones.io/artifactory/webapp/#/artifacts/browse/tree/General/djin-zip-local/djin/platform/rts/Address-PRO/windows/noarch/release/Address-PRO-290.0.0.noarch.zip
+(Currently 290 is the latest)
+
+- The latest version of XIPC can be found here:
+https://artifactory-publish.prod.dowjones.io/artifactory/djin-yum-local/djin/factiva/platform/rtsbinaries_linux/rhel7/i386/release/rtsbinaries_linux-2.5.3.i386.rpm
+(Currently the latest version is 2.5.3) This includes XIPC, RTS, and LSMA.
+- I'll need to ask Wei how to download qtrans.
+
+
+VERY general idea on the process to launch a stack:
+https://wiki.dowjones.net/display/EMGTECH/PIB+Application+Deployment+Guide
+
+EP Page explaining Landing Zones:
+https://wiki.dowjones.net/display/EMGTECH/Landing+Zones
+
+EP page explaining how to create Security Groups for the new stack:
+https://wiki.dowjones.net/display/EMGTECH/LZ+Security+Group+Terraform+Workflow
+(We are in the "cntsvc" landing zone)
+
+EP page explaining how to create IAM Roles for the new stack:
+https://wiki.dowjones.net/display/EMGTECH/LZ+IAM+RoleTerraform+Workflow
+(We are in the "cntsvc" landing zone)
+
+High level network diagram for the first instance we're upgrading:
+https://wiki.dowjones.net/display/DEVOPS/AMI+Upgrades+-+1a+Migrate+Viriinfarchapp1
+
+This the Jenkins job that builds the app. It needs to be modified to put the tar file(?) into Artifactory:
+https://djin-jenkins01.dowjones.net/view/platform/view/track/job/Track_App/
+(Check that you have access and see the "Build Now" link)
+This Jenkins job can be used as a model for how to put the files into Artifactory:
+https://djin-jenkins01.dowjones.net/view/platform/view/track/job/Track_Clipping_App/
+
+Terraform Repo:
+https://github.dowjones.net/djin-infrastructure/djin_acntsvc_track_apps
+
+Jenkins Deployer to actually create the instance:
+https://10.146.84.103/view/cntsvc/job/djin_acntsvc_track_apps/
+(The deployer asks which version of Terraform - use v10 or v11 if it is available).
+
+"Chef Max" documentation:
+https://github.dowjones.net/pages/djin-productivity/respawn/chef_max.html#chef-max
+
+Chef Repo:
+https://github.dowjones.net/DevOps-Cookbooks/djin_track_apps_lnx.git
+(As of this writing we do not have push access to this repository. This should be fixed early next week).
+
+
+****************************************************************************************************
+
+Forked SG repo for Track App: https://github.dowjones.net/track/djin-sg
+Main Upstream SG repo https://github.dowjones.net/Terraform/djin-sg
+
+
+Chef Max Integration: Anil
+
+https://github.dowjones.net/djin-infrastructure/djin_aweb_legacy_rest_api
+
+https://github.dowjones.net/DevOps-Cookbooks/djin_restapis10_win
+
+Lamchit:
+
+https://github.dowjones.net/djin-infrastructure/djin_adsv_trade_compliance_bapi
+
+https://github.dowjones.net/djin-infrastructure/djin_acntsvc_category_manager
+
+
+
+Security Group Rules Link:
+https://wiki.dowjones.net/display/DEVOPS/AMI+Upgrades+-+1a+Migrate+Viriinfarchapp1
+
+
+
+Reference link to use tf code as module.
+https://github.dowjones.net/djin-infrastructure/djin_aweb_fdk_api
+
+Genesis Dynamo Tree
+https://github.dowjones.net/pages/djin-productivity/genesis-dynamo-tree/
+
+Amazon VPC FAQS:
+https://aws.amazon.com/vpc/faqs/
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+variable "sns_topic" {
+    default = {
+        "name" = "djin-prod-vir-tracksearch",
+        "display_name" = "TrackSearchAlarm-Prod-Vir"
+    }
+}
+
+variable "sns_subscription_recipients" {
+    default = {
+        "user1" = "wei.liu@dowjones.com",
+        "user2" = "lou.klimoff@dowjones.com"
+    }
+}
+
+
+
+resource "aws_sns_topic" "recovery" {
+    name = "${var.sns_topic["name"]}"
+    display_name = "${var.sns_topic["display_name"]}"
+
+    provisioner "local-exec" {
+        command = "aws sns subscribe --topic-arn ${self.arn} --protocol email --notification-endpoint ${var.sns_subscription_recipients["user1"]} --region ${var.aws_region}"
+    }
+
+    provisioner "local-exec" {
+        command = "aws sns subscribe --topic-arn ${self.arn} --protocol email --notification-endpoint ${var.sns_subscription_recipients["user2"]} --region ${var.aws_region}"
+    }
+}
+
+resource "aws_cloudwatch_metric_alarm" "tsearch-autorecover" {
+    count = "${var.totalNodes}"
+    alarm_name          = "${var.recovery_alarm_name_prefix}-${count.index}"
+    namespace           = "AWS/EC2"
+    evaluation_periods  = "3"
+    period              = "60"
+    alarm_description   = "ec2-recovery-tsearch-${count.index}"
+    alarm_actions       = ["arn:aws:automate:${var.aws_region}:ec2:recover", "arn:aws:sns:${var.aws_region}:${var.aws_account_id}:${var.sns_topic["name"]}"]
+    statistic           = "Minimum"
+    comparison_operator = "GreaterThanOrEqualToThreshold"
+    threshold           = "1"
+    metric_name         = "StatusCheckFailed_System"
+    dimensions {
+        InstanceId = "${element(aws_instance.tsearch.*.id, count.index)}"
+  }
+}
+
+================================================================================================================
+
+Skip to content
+Enterprise
+This repository
+Search
+Pull requests
+Issues
+Explore
+ @RajawatRaghvendra Sign out
+6
+0 0 djin-infrastructure/djin_acntsvc_consumer_search_marklogic_db
+ Code  Issues 0  Pull requests 0  Projects 0  Insights
+djin_acntsvc_consumer_search_marklogic_db/modules/instances/instance_main.tf
+a986dd9  on Apr 4
+@lana lana Add more nodes and change port back to 8011 from 8013
+     
+496 lines (426 sloc)  16.1 KB
+### Variables expected to pass to modules
+variable "env"    { description = "dev, int, stag, or prod" }
+variable "region" { description = "region" }
+variable "accountid"    { description = "current account id" }
+variable "row"    { description = "instance row number" }
+variable "node_count" { description = "number of columns of instance" }
+variable "first_node" { description = "start column of instance" }
+variable "instance_type" { description  = "aws type of instance" }
+variable "name_prefix"   { description = "name prefix before column name" }
+variable "ami_image" { description = "ami image" }
+variable "preserve_tag" { description = "preserve tag" }
+variable "additional_tags" {  type = "map"   description = "additional tags such as scheduler, etc." }
+variable "scheduler_tags"  { type = "map"  description = "scheduler tags for nonprod" }
+variable "enable_cloudwatch" { description = "enable cloudwatch or not" }
+variable "sns_opsgenie_name" { description = "sns opsgenie name" }
+variable "boot_disk_map"  { type = "map" description = "boot disk configuration" }
+variable "swap_disk_map"  { type = "map" description = "swap disk configuration" }
+variable "marklogic_disk_map"  { type = "map" description = "marklogic disk configuration" }
+variable "data2_disk_map"  { type = "map" description = "data2 disk configuration" }
+variable "backup_disk_map"  { type = "map" description = "backup disk configuration" }
+variable "newrelic_sysmon_tag" { description = "newrelic system monitor tag" }
+variable "chef_env"    { description = "chef environment" }
+
+###############################################################################################
+### Variables has default or can be overridden
+
+
+
+variable "key_name"       {
+  default = "djin-consumer-search"
+}
+
+variable "elb_search_listener" {
+  default = {
+                 "instance_port"     = "8011",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8011",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_ingest_listener" {
+  default = {
+
+                 "instance_port"     = "8010",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8010",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_keepalive_listener" {
+  default = {
+
+                 "instance_port"     = "8012",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8012",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_xdbc_listener" {
+  default = {
+
+                 "instance_port"     = "8019",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8019",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_regtest_search_listener" {
+  default = {
+                 "instance_port"     = "8021",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8021",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_regtest_ingest_listener" {
+  default = {
+
+                 "instance_port"     = "8020",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8020",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_regtest_keepalive_listener" {
+  default = {
+
+                 "instance_port"     = "8022",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8022",
+                 "lb_protocol"       = "http"
+              }
+}
+
+variable "elb_regtest_xdbc_listener" {
+  default = {
+
+                 "instance_port"     = "8029",
+                 "instance_protocol" = "http",
+                 "lb_port"           = "8029",
+                 "lb_protocol"       = "http"
+              }
+}
+
+####################################################################
+### Variables mapping
+
+variable "domain_map" { type = "map"
+  default = {
+    dev  = "cntsvc.int.pib.dowjones.io"
+    int  = "cntsvc.int.pib.dowjones.io"
+    stag = "cntsvc.stag.pib.dowjones.io"
+    prod = "cntsvc.prod.pib.dowjones.io"
+  }
+}
+
+
+##############################
+##### Locals
+locals {
+   domain_name = "${lookup(var.domain_map, var.env)}"
+   common_tags = {
+     owner = "dnsa.support@dowjones.com"
+     bu = "djin"
+     product = "platform"
+     component = "search-consumer"
+     environment = "${var.env}"
+     servicename = "djin/platform/search-consumer"
+     preserve = "${var.preserve_tag}"
+    }
+    elb_name = "${var.name_prefix}${var.first_node}elb"
+    healthcheck_target = "HTTP:8012/v1/resources/keepalive?rs%3Aserver=DigitalNetworkSearch"
+}
+
+
+####### Get standard security group
+data "aws_security_group" "standard" {
+    tags {
+        Name = "djin_standard"
+    }
+}
+
+
+###### Get marklogic specific security groups
+data "aws_security_group" "djin_csearch_mldb" {
+    /* tags {
+        Name = "djin_csearch_mldb"
+    }
+    */
+    name = "djin_csearch_mldb"
+}
+
+###### Get marklogic ELB specific security groups
+data "aws_security_group" "djin_csearch_mldbelb" {
+    /* tags {
+        Name = "djin_csearch_mldbelb"
+    }
+    */
+    name = "djin_csearch_mldbelb"
+}
+
+
+##### EC2 subnet details
+data "aws_subnet_ids" "private" {
+  vpc_id = "${data.aws_security_group.standard.vpc_id}"
+  tags {
+    Name = "pib.*.cntsvc.*-pri-*"  // filtering for only private subnet
+  }
+}
+
+output "subnet_ids" {
+    value = "${data.aws_subnet_ids.private.ids}"
+}
+
+
+data "aws_subnet" "private" {
+  count = "${length(data.aws_subnet_ids.private.ids)}"
+  id = "${data.aws_subnet_ids.private.ids[count.index]}"
+  state = "available"
+}
+
+##### ELB subnet details
+data "aws_subnet_ids" "protect" {
+  vpc_id = "${data.aws_security_group.standard.vpc_id}"
+  tags {
+    Name = "pib.*.cntsvc.*-pro-*"  // filtering for only protect subnet
+  }
+}
+
+output "protect_subnet_ids" {
+    value = "${data.aws_subnet_ids.protect.ids}"
+}
+
+
+data "aws_subnet" "protect" {
+  count = "${length(data.aws_subnet_ids.protect.ids)}"
+  id = "${data.aws_subnet_ids.protect.ids[count.index]}"
+  state = "available"
+}
+
+############ Chef Max
+module "chef-max" {
+    source = "git::https://github.dowjones.net/djin-productivity/ep-terraform-modules//tf_aws_userdata"
+    chef_role = "consumer_search_marklogic_setup"
+    chef_env = "${var.chef_env}"
+    chef_cookbook = "djin_consumer_search_marklogic_db_lnx"
+    chef_cookbook_version = "latest"
+}
+
+################################## START CREATION #################################
+####### Create marklogic disk
+resource "aws_ebs_volume" "default" {
+  count = "${var.node_count}"
+  availability_zone = "${element(data.aws_subnet.private.*.availability_zone, count.index % length(data.aws_subnet.private.*.id)) }"
+  size = "${var.marklogic_disk_map["size"]}"
+  type = "${var.marklogic_disk_map["type"]}"
+  tags = "${merge(
+          local.common_tags,
+          var.additional_tags,
+          map(
+            "Name", "${var.name_prefix}${count.index + var.first_node}-${var.marklogic_disk_map["suffix"]}"
+          )
+        )}"
+}
+
+###### attach marklogic disk
+resource "aws_volume_attachment" "default" {
+  count = "${var.node_count}"
+  device_name = "${var.marklogic_disk_map["device_name"]}"
+  volume_id   = "${element(aws_ebs_volume.default.*.id, count.index)}"
+  instance_id = "${element(aws_instance.default.*.id, count.index)}"
+  skip_destroy = "true"
+}
+
+###### Create data2 disk to save log, /var/opt/MarkLogic
+resource "aws_ebs_volume" "data2" {
+  count = "${var.node_count}"
+  availability_zone = "${element(data.aws_subnet.private.*.availability_zone, count.index % length(data.aws_subnet.private.*.id)) }"
+  size = "${var.data2_disk_map["size"]}"
+  type = "${var.data2_disk_map["type"]}"
+  tags = "${merge(
+          local.common_tags,
+          var.additional_tags,
+          map(
+            "Name", "${var.name_prefix}${count.index + var.first_node}-${var.data2_disk_map["suffix"]}"
+          )
+        )}"
+}
+
+###### attach data2 disk
+resource "aws_volume_attachment" "data2" {
+  count = "${var.node_count}"
+  device_name = "${var.data2_disk_map["device_name"]}"
+  volume_id   = "${element(aws_ebs_volume.data2.*.id, count.index)}"
+  instance_id = "${element(aws_instance.default.*.id, count.index)}"
+  skip_destroy = "true"
+}
+
+##### Create marklogic backup disk
+resource "aws_ebs_volume" "backup" {
+  count = "${var.node_count}"
+  availability_zone = "${element(data.aws_subnet.private.*.availability_zone, count.index % length(data.aws_subnet.private.*.id)) }"
+  size = "${var.backup_disk_map["size"]}"
+  type = "${var.backup_disk_map["type"]}"
+  tags = "${merge(
+          local.common_tags,
+          var.additional_tags,
+          map(
+            "Name", "${var.name_prefix}${count.index + var.first_node}-${var.backup_disk_map["suffix"]}"
+          )
+        )}"
+}
+
+###### attach marklogic backup disk
+resource "aws_volume_attachment" "backup" {
+  count = "${var.node_count}"
+  device_name = "${var.backup_disk_map["device_name"]}"
+  volume_id   = "${element(aws_ebs_volume.backup.*.id, count.index)}"
+  instance_id = "${element(aws_instance.default.*.id, count.index)}"
+  skip_destroy = "true"
+}
+
+#### user data
+data "template_file" "userdata" {
+  count = "${var.node_count}"
+  template = "${file("../../../scripts/userdata.sh")}"
+  vars {
+    chef_max_sh          = "${module.chef-max.linux_userdata}"
+    terraform_hostname = "${var.name_prefix}${count.index + var.first_node}"
+    terraform_domain = "${local.domain_name}"
+  }
+}
+#data  "template_file" "userdata" {
+#    count = "${var.node_count}"
+#    template = "${file("../../../scripts/userdata.sh")}"
+#    vars {
+#        terraform_hostname = "${var.name_prefix}${count.index + var.first_node}"
+#        terraform_domain = "${local.domain_name}"
+#        newrelic_sysmon_tag = "${var.newrelic_sysmon_tag}"
+#    }
+#}
+
+
+##################################################################
+####### create instance
+resource "aws_instance" "default" {
+    lifecycle {
+        ignore_changes = ["user_data", "security_groups", "ebs_block_device"
+                         ]
+    }
+
+    count = "${var.node_count}"
+    instance_type = "${var.instance_type}"
+    ami = "${var.ami_image}"
+    key_name = "${var.key_name}"
+    ebs_optimized = "true"
+    availability_zone = "${element(data.aws_subnet.private.*.availability_zone, count.index % length(data.aws_subnet.private.*.id)) }"
+    subnet_id	 =  "${element(data.aws_subnet.private.*.id, count.index % length(data.aws_subnet.private.*.id))}"
+	vpc_security_group_ids = ["${data.aws_security_group.standard.id}","${data.aws_security_group.djin_csearch_mldb.id}"]
+    tags = "${merge(
+        local.common_tags,
+        var.additional_tags,
+        map(
+          "Name", "${var.name_prefix}${count.index + var.first_node}"
+        ),
+        var.scheduler_tags
+      )}"
+
+    root_block_device {
+        volume_size = "${var.boot_disk_map["size"]}"
+        volume_type = "${var.boot_disk_map["type"]}"
+        delete_on_termination = true
+    }
+
+    # swap
+    ebs_block_device {
+        device_name = "${var.swap_disk_map["device_name"]}"
+        volume_size = "${var.swap_disk_map["size"]}"
+        volume_type = "${var.swap_disk_map["type"]}"
+        delete_on_termination = true
+    }
+
+    #depends_on = [
+    #   "aws_ebs_volume.default",
+    #   "aws_ebs_volume.data2",
+    #   "aws_ebs_volume.backup"
+    # ]
+
+    user_data = "${element(data.template_file.userdata.*.rendered, count.index)}"
+}
+
+#############################################################################
+####### create route53
+data "aws_route53_zone" "selected" {
+  name = "${local.domain_name}"
+}
+
+resource "aws_route53_record" "default" {
+  count = "${var.node_count}"
+  zone_id = "${data.aws_route53_zone.selected.zone_id}"
+  name = "${var.name_prefix}${count.index + var.first_node}.${local.domain_name}"
+  type = "A"
+  ttl = "180"
+  records = ["${element(aws_instance.default.*.private_ip, count.index)}"]
+}
+
+
+##### load balancer for search and ingestion
+resource "aws_elb" "default" {
+  name = "${local.elb_name}"
+  subnets	 =  ["${data.aws_subnet.protect.*.id}"]
+  security_groups = ["${data.aws_security_group.standard.id}","${data.aws_security_group.djin_csearch_mldbelb.id}"]
+  internal = true
+    tags = "${merge(
+        local.common_tags,
+        map(
+          "Name", "${local.elb_name}"
+        )
+      )}"
+
+  # search
+  listener {
+    instance_port     = "${var.elb_search_listener["instance_port"]}"
+    instance_protocol = "${var.elb_search_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_search_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_search_listener["lb_protocol"]}"
+    #ssl_certificate_id = "${var.elb_ml_certid}"
+  }
+
+  # ingest
+  listener {
+    instance_port     = "${var.elb_ingest_listener["instance_port"]}"
+    instance_protocol = "${var.elb_ingest_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_ingest_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_ingest_listener["lb_protocol"]}"
+    #ssl_certificate_id = "${var.elb_ml_certid}"
+  }
+
+  # keepalive
+  listener {
+    instance_port     = "${var.elb_keepalive_listener["instance_port"]}"
+    instance_protocol = "${var.elb_keepalive_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_keepalive_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_keepalive_listener["lb_protocol"]}"
+  }
+
+  # xdbc
+  listener {
+    instance_port     = "${var.elb_xdbc_listener["instance_port"]}"
+    instance_protocol = "${var.elb_xdbc_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_xdbc_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_xdbc_listener["lb_protocol"]}"
+  }
+
+  # regtest search
+  listener {
+    instance_port     = "${var.elb_regtest_search_listener["instance_port"]}"
+    instance_protocol = "${var.elb_regtest_search_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_regtest_search_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_regtest_search_listener["lb_protocol"]}"
+    #ssl_certificate_id = "${var.elb_ml_certid}"
+  }
+
+  # regtest ingest
+  listener {
+    instance_port     = "${var.elb_regtest_ingest_listener["instance_port"]}"
+    instance_protocol = "${var.elb_regtest_ingest_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_regtest_ingest_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_regtest_ingest_listener["lb_protocol"]}"
+    #ssl_certificate_id = "${var.elb_ml_certid}"
+  }
+
+  # regtest keepalive
+  listener {
+    instance_port     = "${var.elb_regtest_keepalive_listener["instance_port"]}"
+    instance_protocol = "${var.elb_regtest_keepalive_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_regtest_keepalive_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_regtest_keepalive_listener["lb_protocol"]}"
+  }
+
+  # regtest xdbc
+  listener {
+    instance_port     = "${var.elb_regtest_xdbc_listener["instance_port"]}"
+    instance_protocol = "${var.elb_regtest_xdbc_listener["instance_protocol"]}"
+    lb_port           = "${var.elb_regtest_xdbc_listener["lb_port"]}"
+    lb_protocol       = "${var.elb_regtest_xdbc_listener["lb_protocol"]}"
+  }
+
+  health_check {
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 5
+    target              = "${local.healthcheck_target}"
+    interval            = 30
+  }
+
+  instances  = ["${aws_instance.default.*.id}"]
+  cross_zone_load_balancing   = true
+  idle_timeout =  300
+
+}
+
+##### route53 for ELB
+resource "aws_route53_record" "elb" {
+    zone_id = "${data.aws_route53_zone.selected.zone_id}"
+    name = "${local.elb_name}"
+    type = "CNAME"
+    ttl = "60"
+    records = ["${aws_elb.default.dns_name}"]
+
+}
+
+##### auto recovery
+resource "aws_cloudwatch_metric_alarm" "dnsrchdb-autorecover" {
+    count = "${var.node_count}"
+    alarm_name          = "${var.name_prefix}${count.index + var.first_node}-autorecovery"
+    namespace           = "AWS/EC2"
+    evaluation_periods  = "3"
+    period              = "60"
+    alarm_description   = "statusCheckFailedSystem-${var.name_prefix}${count.index + var.first_node}"
+    alarm_actions       = ["arn:aws:sns:${var.region}:${var.accountid}:${var.sns_opsgenie_name}"]
+    statistic           = "Minimum"
+    comparison_operator = "GreaterThanOrEqualToThreshold"
+    threshold           = "1"
+    metric_name         = "StatusCheckFailed_System"
+    dimensions {
+        InstanceId = "${element(aws_instance.default.*.id, count.index)}"
+     }
+  }
+  
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+//
+// Module: asg
+//
+
+// This template creates the following resources
+// - Auto Scaling Group Configuration
+// - auto scaling policy
+resource "aws_autoscaling_group" "asg" {
+  count                     = "${var.enable_autoscaling}"
+  name               = "${var.name}"
+  launch_configuration      = "${var.launch_configuration}"
+  availability_zones        = ["${var.availability_zones}"]
+  load_balancers            = ["${var.load_balancer}"]
+  //health_check_type         = "${var.health_check_type}"
+
+  max_size                  = "${var.max_size}"
+  min_size                  = "${var.min_size}"
+  //wait_for_elb_capacity     = "${var.min_size}"
+  desired_capacity          = "${var.desired_capacity}"
+
+  /*default_cooldown          = 10*/
+  vpc_zone_identifier       = "${var.vpc_zone_identifier}"
+  tags                      = "${var.tags}"
+  //wait_for_capacity_timeout = "35m"
+  metrics_granularity       = "${var.metrics_granularity}"
+  #termination_policies      = ["OldestInstance"]
+
+  enabled_metrics = [
+    "GroupDesiredCapacity",
+    "GroupInServiceInstances",
+    "GroupMaxSize",
+    "GroupMinSize",
+    "GroupPendingInstances",
+    "GroupStandbyInstances",
+    "GroupTerminatingInstances",
+    "GroupTotalInstances",
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_policy" "asg-scale-up" {
+  count                   = "${var.enable_autoscaling}"
+  name                    = "asg-scale-up-${var.cluster_name}-${var.env}"
+  scaling_adjustment      = 1
+  adjustment_type         = "ChangeInCapacity"
+  cooldown                = "${var.cooldown}"
+  autoscaling_group_name  = "${aws_autoscaling_group.asg.name}"
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_policy" "asg-scale-down" {
+  count                   = "${var.enable_autoscaling}"
+  name                    = "asg-scale-down-${var.cluster_name}-${var.env}"
+  scaling_adjustment      = -1
+  adjustment_type         = "ChangeInCapacity"
+  cooldown                = "${var.cooldown}"
+  autoscaling_group_name  = "${aws_autoscaling_group.asg.name}"
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_schedule" "scaleDown" {
+  count = "${var.autoscaling_schedule_enabled}"
+  scheduled_action_name = "scaleDown"
+  autoscaling_group_name = "${aws_autoscaling_group.asg.name}"
+  min_size = "${var.scaledown_min_size}"
+  max_size = "${var.scaledown_max_size}"
+  desired_capacity = "${var.scaledown_desired_capacity}"
+  recurrence = "${var.autoscaling_schedule_recurrence_down}"
+}
+
+resource "aws_autoscaling_schedule" "scaleUp" {
+  count = "${var.autoscaling_schedule_enabled}"
+  scheduled_action_name = "scaleUp"
+  autoscaling_group_name = "${aws_autoscaling_group.asg.name}"
+  min_size = "${var.min_size}"
+  max_size = "${var.max_size}"
+  desired_capacity = "${var.desired_capacity}"
+  recurrence = "${var.autoscaling_schedule_recurrence_up}"
+}
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+Passing list into Dimension field in Cloudwatch alarm: 
+resource "aws_cloudwatch_metric_alarm" "cpu_credits" {
+  count = 2
+  ...
+  dimensions { InstanceId = "${element(list("i-07656896d6947814c", "i-042e664331a74e385"), count.index)}" }
+  dimensions { InstanceId = "${element(aws_instance.my_instance.*.id, count.index)}" }
+}
