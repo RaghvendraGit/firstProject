@@ -1,0 +1,410 @@
+###############################################################################
+
+Creating N number of ec2 instances in different subnets by getting subnet Id's dynamically.
+
+In your terraform sample you are using count to create multiple instances of the resource, but are specifying the same subnet for each instance (var.subnet_id).
+You can use the count index to set resource properties to different values for each instance. For example, you can define your list of subnets as a variable 
+and then use element() to pick one based on the count index.
+
+variable "subnet_ids" {
+  default =  [ "s1", "s2", "s3" ]
+}
+
+resource "aws_instance" "ec2-instance"
+{
+  count = "${var.count}"
+  subnet_id = "${element(var.subnet_ids, count.index)}"
+  
+  I'd probably recommend the list[index] syntax over element(list, index) nowadays but this is definitely the right way to do this. 
+  Even better when you combine this with the aws_subnet_ids data source!
+
+Good Example below:
+
+The following example retrieves a list of all subnets in a VPC with a custom tag of Tier set to a value of "Private" so that 
+the aws_instance resource can loop through the subnets, putting instances across availability zones.
+
+data "aws_subnet_ids" "private" {
+  vpc_id = "${var.vpc_id}"
+  tags {
+    Tier = "Private"
+  }
+}
+
+resource "aws_instance" "app" {
+  count         = "3"
+  ami           = "${var.ami}"
+  instance_type = "t2.micro"
+  subnet_id     = "${element(data.aws_subnet_ids.private.ids, count.index)}"
+}
+
+###########################
+
+
+Chef code.
+#create UserData
+data "template_file" "init" {
+  template = "${file("userdata.txt")}"
+
+  vars {
+    Region = "${var.aws_region}"
+    stack_name = "${var.stack_name}"
+    stack_id  = "${var.stack_id}"
+    lc_name = "${var.lc_name}"
+    CHEF_RUNLIST = "${var.CHEF_RUNLIST}"
+    CHEF_ENV  = "${var.CHEF_ENV}"
+    CHEF_COOKBOOK = "${var.CHEF_COOKBOOK}"
+    }
+  }
+  
+  
+variable "CHEF_RUNLIST" {
+  default = "restapi_role"
+}
+
+variable "CHEF_ENV" {
+  default = "restapi_int"
+}
+
+variable "CHEF_COOKBOOK" {
+  default = "djin_restapis10_win"
+}
+
+
+============================
+Using Chef_MAx Module
+
+module "chef-max" {
+    source = "git::https://github.dowjones.net/djin-productivity/ep-terraform-modules//tf_aws_userdata"
+    chef_cookbook = "${var.chef_cookbook}"
+    chef_role = "${var.chef_role}"
+    chef_env = "${var.chef_env}"
+    chef_interval = "${var.chef_interval}"
+    chef_cookbook_version = "${var.chef_cookbook_version}"
+}
+
+In the instance, define
+ user_data = "${module.chef-max.linux_userdata}"
+*************************************************************************
+Get the length of a list and Map variables in Terraform.
+
+MAP:
+
+locals {
+  env = "${terraform.workspace}"
+
+  subnet_names = {
+    "default" = ["default_sub1"]
+    "dev"     = ["dev_sub1", "dev_sub2", "dev_sub3"]
+    "prod"    = ["prod_sub1", "prod_sub2", "prod_sub3"]
+  }
+
+}
+
+count = "${length(local.subnet_names[local.env])}"
+
+List:::::::::::::::::::::::::::::
+
+resource "aws_security_group_rule" "allow_ssh_inbound" {
+  count       = "${length(var.allowed_ssh_cidr_blocks) >= 1 ? 1 : 0}"
+  type        = "ingress"
+  from_port   = "${var.ssh_port}"
+  to_port     = "${var.ssh_port}"
+  protocol    = "tcp"
+  cidr_blocks = ["${var.allowed_ssh_cidr_blocks}"]
+
+  security_group_id = "${aws_security_group.lc_security_group.id}"
+}
+
+resource "aws_security_group_rule" "allow_ssh_inbound_from_security_group_ids" {
+  count                    = "${length(var.allowed_ssh_security_group_ids)}"
+  type                     = "ingress"
+  from_port                = "${var.ssh_port}"
+  to_port                  = "${var.ssh_port}"
+  protocol                 = "tcp"
+  source_security_group_id = "${element(var.allowed_ssh_security_group_ids, count.index)}"
+
+  security_group_id = "${aws_security_group.lc_security_group.id}"
+}
+
+
+
+Add Route53 A record automatically for new aws_instance resource:
+
+variable "num_instances" {
+  default = 3
+}
+resource "aws_instance" "app" {
+  count = "${var.num_instances}"
+  // ...
+}
+resource "aws_route53_record" "app" {
+  // same number of records as instances
+  count = "${var.num_instances}"
+  zone_id = "${aws_route53_zone.main.zone_id}"
+  name = "app0${count.index}"
+  type = "A"
+  ttl = "300"
+  // matches up record N to instance N
+  records = ["${element(aws_instance.app.*.private_ip, count.index)}"]
+}
+
+====================================================================
+Work Items:
+Got Push access to the Chef repo of MarkLogic Events DB.
+You have been added to a Team Drive: OKR ? What is this ?
+
+MarkLogic TrackFolders integration
+
+Here are the things I found that need to be fix --
+
+1. sudo settings should be for for user "search"
+2. home directory for user search is /home/search, which is a symbolic link to /data/home/search
+3. make /data owned by user "search"
+4. user "search" needs to be able to ssh to itself (in other environment with multi-node cluster all members of the cluster) without prompting for password
+5. Missing redhat-lsb package
+6. Missing gdb package
+7. Missing cyrus-sasl package 
+8. Install wget and telnet for convenience.
+9. host has fewer HugePages (2836) than recommended (2837)
+10. "sudo /bin/rm -rf /var/opt/MarkLogic/*" missing
+11. "sudo /bin/mkdir -p /opt/MarkLogic/Apps/installer" missing
+12. Download MarkLogic rpm to /home/search/release/
+
+Track App install on awsifasearchapp01:
+Here are the steps -
+
+1. Download from artifactory djin-zip-local/djin/platform/alerts/track_app/rhel7/i386/release/
+2. Put the zip file in /home/search/release
+3. unzip the file which will generate a tar file
+4. untar the tar file (for example, trkapp4.4.x.tar.gz) which will create a trkapp<version> directory
+5. cd to the <untarred dir>/bin/
+6. ./install.sh <version>
+
+Start Working on Archive Apps server , Is it a new app server like we have for trackpp, marklogic etc.
+Information for building Archive Apps server 
+
+===============================
+
+-bash-4.2$ ./install.sh 4.4.5
++ . /usr/factiva/trackapp/.bashrc
+./install.sh: line 7: /usr/factiva/trackapp/.bashrc: No such file or directory
++ PROG=./install.sh
++ export SVC_ROOT=/usr/factiva/ntrack
++ SVC_ROOT=/usr/factiva/ntrack
++ TRACK_VERSION=4.4.5
+++ dirname ./install.sh
++ RELBIN_DIR=.
++ svc_user=trackapp
+++ echo trackapp
++ WHO=trackapp
++ [[ trackapp != \t\r\a\c\k\a\p\p ]]
++ source /usr/factiva/trackapp/.bashrc
+./install.sh: line 29: /usr/factiva/trackapp/.bashrc: No such file or directory
++ [[ '' = '' ]]
++ echo 'SVC not yet set, preparing bashrc'
+SVC not yet set, preparing bashrc
+++ hostname -s
++ HOST=awsifasearchapp01
++ [[ awsifasearchapp01 =~ skd ]]
++ [[ awsifasearchapp01 =~ viriin ]]
++ [[ awsifasearchapp01 =~ skq ]]
++ [[ awsifasearchapp01 =~ skp ]]
++ echo 'Unknown host awsifasearchapp01. Abort!'
+Unknown host awsifasearchapp01. Abort!
++ exit 1
+-bash-4.2$ cd ~
+-bash-4.2$ pwd
+/usr/factiva/trackapp
+-bash-4.2$ ls -la
+total 12
+drwxr-xr-x. 2 trackapp track 4096 May  8 05:34 .
+drwxr-xr-x. 5 trackapp track 4096 May  8 05:35 ..
+-rw-r--r--. 1 trackapp root   530 May  8 05:34 .bash_profile
+
+
+*****************
+
+trakapp installation looking for .bashrc file whereas we have bash_profile.
+For trackapp instance there is no search user creation given in doc, do i have to create ?
+There is no such location /home/search/release for track app instance. Shall i create release folder in trackapp home dir ?
+need to show ssh access to its own instance with search user.
+will have to make entry in etc/host file for host name.
+
+
+https://djin-server-artifacts-ro:AKCp2Tg3wq3cWoyrLkwS7zAvkqaBNNbPzM7HfPpwEjNoSjUm6M1yPW49Npdh9AXzfJC7yZsXe@artifactory.dowjones.io/artifactory/api/search/latestVersion?g=djin.platform.alerts&a=track_app&repos=djin-zip-local
+
+https://artifactory.dowjones.io/artifactory/api/search/latestVersion?g=djin.platform.alerts&a=track_app&repos=djin-zip-local
+
+
+Need to fix hostname issue in track app instance
+
+- For hostname not to have domainname also , i will have to set it without domain name.
+- To get FQDN on running hostname -f command, i will have to do entries in etc/hosts file.
+- libaio.so.1 coming aftet installing it "sudo yum install libaio". Got installed at /usr/lib64
+- I could see libcurl.so.4 installed at /usr/lib64
+- I could see libxerces-c-3.1.so installed at /usr/lib which is also mentioned in requirement docs, although not sure of having libxerces-c.so.28
+  Do you think libxerces-c.so.28 is not coming because we are installing latest version of xerces not xerces-c_2_8_0-x86-linux-gcc_3_4 ?
+- Searched for installing " libxerces-depdom.so.28 " but every where RPM was available only for centos 5, is it deprecated for Centos 7 ?  
+
+
+TO find which rpm has installed the libraries
+rpm -q --whatprovides /usr/lib/libxerces-c-3.1.so
+xerces-c-3.1.1-8.el7_2.i686
+
+To see where is the packages installed
+rpm -ql xerces-c.i686
+
+
+
+
+require "rubygems"
+require "json"
+require "net/http"
+require "uri"
+
+uri = URI.parse("https://djin-server-artifacts-ro:AKCp2Tg3wq3cWoyrLkwS7zAvkqaBNNbPzM7HfPpwEjNoSjUm6M1yPW49Npdh9AXzfJC7yZsXe@artifactory.dowjones.io/artifactory/api/search/latestVersion?g=djin.platform.alerts&a=track_app&repos=djin-zip-local")
+
+http = Net::HTTP.new(uri.host, uri.port)
+request = Net::HTTP::Get.new(uri.request_uri)
+
+response = http.request(request)
+
+if response.code == "200"
+  result = JSON.parse(response.body)
+  
+  result.each do |doc|
+    puts doc # this is the result in object form    
+  end
+else
+  puts "ERROR!!!"
+end
+
+
+uri = URI.parse("https://artifactory.dowjones.io/artifactory/api/search/latestVersion?g=djin.platform.alerts&a=track_app&repos=djin-zip-local")
+user = "djin-server-artifacts-ro"
+pass = "AKCp2Tg3wq3cWoyrLkwS7zAvkqaBNNbPzM7HfPpwEjNoSjUm6M1yPW49Npdh9AXzfJC7yZsXe"   
+version = ""
+
+uri = URI("https://artifactory.dowjones.io/artifactory/api/search/latestVersion?g=djin.platform.alerts&a=track_app&repos=djin-zip-local")
+
+Net::HTTP.start(uri.host, uri.port,
+  :use_ssl => uri.scheme == 'https', 
+  :verify_mode => OpenSSL::SSL::VERIFY_NONE) do |http|
+
+  request = Net::HTTP::Get.new uri.request_uri
+  request.basic_auth user, pass
+
+  response = http.request request # Net::HTTPResponse object
+  version = response.body
+end
+
+puts "#{version}"
+
+
+=====================
+
+
+
+
+[centos@awsifasearch1n1 ~]$ cat /proc/cmdline
+BOOT_IMAGE=/boot/vmlinuz-3.10.0-693.11.6.el7.x86_64 root=UUID=6f15c206-f516-4ee8-a4b7-89ad880647db ro console=tty0 crashkernel=auto console=ttyS0,115200 net.ifnames=0 transparent_hugepage=never elevator=noop
+
+
+
+remote_file "/usr/local/aws/awscli-bundle.zip" do 
+  source "https://s3.amazonaws.com/dj-repo/public/aws/awscli-bundle.zip" 
+  checksum "/usr/local/aws/awscli-bundle.zip" 
+  notifies :run, "bash[install_program]", :immediately 
+end
+https://github.dowjones.net/DevOps-Cookbooks/aws-cli/blob/master/recipes/default.rb
+
+
+******************************
+Generating SSH Keys, without pressing ENTER, when you don't have to pass anything but ENTER:
+echo | ssh-keygen -P '' -t rsa
+
+#copy your public key to destination machine2
+ssh-copy-id -i ~/.ssh/id_rsa.pub username@machine2
+
+Worked on Testing on checksum property but not luck.
+Worked on password-less ssh access, done it for self only.
+
+
+
+====================================
+
+bash "install" do
+    Chef::Log.info("#{appname}: releasefilename in BASH  = #{releasefilename}")
+    user    "trackapp"
+    group   "track"
+    cwd     "#{release_dir}"
+    code   <<-EOF
+                echo "`date`** in bash pwd=`pwd` releasefilename=#{releasefilename}" | tee -a #{install_logfile}
+                tar xfzv #{releasefilename}.tar.gz | tee -a #{install_logfile}
+                echo "* tar complete. Changing dir to #{release_dir}/#{releasefilename}" | tee -a #{install_logfile}
+	cd #{releasefilename} 
+	        echo "* after cd. Current dir=`pwd`"  | tee -a #{install_logfile}
+	  	bin/install_chef.sh #{app_version}  2>&1 | tee -a #{install_logfile}
+		echo "* Install complete" | tee -a #{install_logfile}
+    EOF
+    only_if  { !app_version.nil? && !app_version.empty? }
+end
+
+===================================================
+
+/usr/factiva/ntrack/bin/ctp -C /usr/factiva/ntrack/config/SF/ctpFolder_1.conf
+
+Libraries installation:
+yum install libcurl
+yum install libcurl.i686
+xerces-c-2.8.0-4.el5.art.i386.rpm (http://www6.atomicorp.com/channels/atomic/centos/5/i386/RPMS/xerces-c-2.8.0-4.el5.art.i386.rpm)
+compat-libcom_err-1.0-5.i386.rpm (ftp://ftp.pbone.net/mirror/www.whiteboxlinux.org/whitebox/4/en/updates/i386/compat-libcom_err-1.0-5.i386.rpm)
+openssl097-0.9.7g-8.pp-rh73.i686.rpm (ftp://ftp.pbone.net/mirror/ftp.pramberger.at/systems/linux/contrib/rh73/i686/openssl097-0.9.7g-8.pp-rh73.i686.rpm)
+sudo yum install libaio
+sudo yum install libaio.i686
+
+
+
+[trackapp@viriinfasearchapp01 _fint_ ~]$ ll /usr/factiva/sal/lib (3 jars)
+/usr/factiva/ntrack/lib/mysql-connector-java-5.1.5-bin.jar (1 Jar)
+
+
+[trackapp@awsifasearchapp01 _fint_ java_logs]$ tail -f EspFtp.java_out.20180525051029
+OpenJDK 64-Bit Server VM warning: ignoring option MaxPermSize=256M; support was removed in 8.0
+Config file not found: /usr/factiva/sal/conf/SemanticAnalysis.cfg
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+How to dynamically take the host name in userdata ?
+do we need to assign password to tinymngr and xipc user ?
+where ever package location is not specified , I will keep those in opt and then create the symbolic link.
+dsapi-cpp , where should i get it from ?
+do we want trackapp user to be sudo user for running one command only ?
+
+Pending items:
+syslog and logrotate
+Auto start web service upon reboot
+command “hostname –f” must return fully qualified domain name
+Address.dat taking env name dynamically in the URL.
+/usr/factiva/track-restapp/bin/trackapp-syslog ?
+
+
+free -m | grep Mem | awk '{print $2}'
+free -g | grep Mem | awk '{print $2}'
+
+Parsing URL and getting the package name only.
+fieldCount=`echo <url> | grep -o "/"| wc -l`
+fieldCount=`expr $fieldCount + 1`
+packageName=`echo <url> | cut -d / -f $fieldCount`
+
+mkdir /data/varfactiva
+mkdir /data/usrfactiva
+ln -s /data/varfactiva /var/factiva
+ln -s /data/usrfactiva /usr/factiva
+
+Also - then you can make "trackapp" the owner of the "varfactiva" and "usrfactiva" directories.
+
+c1=`free -m | grep Mem | awk '{print $2}'`
+c2=`expr $c1 \* 3`
+c3=`expr $c2 / 8`
